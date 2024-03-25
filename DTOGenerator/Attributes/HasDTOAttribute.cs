@@ -3,10 +3,10 @@
 namespace SynoLib.Generators.Attributes;
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, Inherited = false, AllowMultiple = false)]
 public sealed class HasDTOAttribute : Attribute {
+    public ConversionForm ConversionForm { get; }
 
-    private ConversionForm _conversionForm { get; }
     public HasDTOAttribute(ConversionForm conversionForm = ConversionForm.Explicit) {
-        _conversionForm = conversionForm;
+        ConversionForm = conversionForm;
     }
 }
 
@@ -23,6 +23,6 @@ public enum ConversionForm {
     Implicit = 2,
     /// <summary> A static method on the DTO class will be created to handle conversions. e.g. DTOType dto = DTOType.ToDTO(model); </summary>
     StaticMethods = 4,
-    /// <summary> A static static extension method will be created to handle conversions. e.g. DTOType dto = model.ToDTO(); </summary>
-    StaticExtensionMethods = 8,
+    /// <summary> A reference method will be created to handle conversions. e.g. DTOType dto = model.ToDTO(); </summary>
+    ReferenceMethods = 8,
 }
