@@ -8,6 +8,7 @@
     <IsRoslynComponent>true</IsRoslynComponent>
     <LangVersion>latest</LangVersion>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <RootNamespace>SynoLib.Generators</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>

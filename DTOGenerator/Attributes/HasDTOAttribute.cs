@@ -1,11 +1,24 @@
 ﻿using System;
 
 namespace SynoLib.Generators.Attributes;
+
+/// <summary>
+/// Tells the generator that this class should have a DTO
+/// </summary>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, Inherited = false, AllowMultiple = false)]
 public sealed class HasDTOAttribute : Attribute {
+    public string DTOClassName { get; }
     public ConversionForm ConversionForm { get; }
-
-    public HasDTOAttribute(ConversionForm conversionForm = ConversionForm.Explicit) {
+    /// <summary>
+    /// 
+    /// </summary>
+    /// <param name="dtoClassname">
+    /// The name of the generated DTO, [class] will be replaced with the class' name;
+    /// Default is "[class]DTO"
+    /// </param>
+    /// <param name="conversionForm"></param>
+    public HasDTOAttribute(string dtoClassname="[class]DTO", ConversionForm conversionForm = ConversionForm.Explicit) {
+        DTOClassName = dtoClassname;
         ConversionForm = conversionForm;
     }
 }

@@ -1,15 +1,17 @@
-﻿using DTOGenerator.Attributes;
-using Microsoft.CodeAnalysis;
+﻿using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using SynoLib.Generators.Attributes;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Metadata;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 
 namespace SynoLib.Generators;
@@ -38,48 +40,53 @@ internal sealed class TheGenerator : IIncrementalGenerator {
 
     private static void Execute(SourceProductionContext context, (Compilation Left, ImmutableArray<ClassDeclarationSyntax> Right) tuple) {
         var (compilation, list) = tuple;
-
-        HashSet<ClassDeclarationSyntax> classes = new();
-        foreach (var cls in list) {
-            SemanticModel model = compilation.GetSemanticModel(cls.SyntaxTree);
-            foreach (var attribute in cls.AttributeLists.SelectMany(a => a.Attributes)) {
-                Microsoft.CodeAnalysis.TypeInfo info = model.GetTypeInfo(attribute);
-                if (info.Type?.ToString() == typeof(HasDTOAttribute).FullName) {
-                    classes.Add(cls);
-                    break;
-                }
-            }
-        }
         
         StringBuilder builder = new();
 
-        builder.Append("namespace SynoLib;\n");
-        builder.Append(FetchAllNonGeneratorUsings(compilation.SyntaxTrees));
+        builder.Append(GetUsings(list));
         builder.AppendLine();
-        foreach (var cls in list) {
+        var groups = from c in list
+                     group c by GetNamespace(c);
 
+        foreach (var namespaceGroup in groups) {
             SyntaxList<MemberDeclarationSyntax> members = new();
-            foreach (var member in cls.Members) {
-                if (member is FieldDeclarationSyntax or PropertyDeclarationSyntax)
-                    members = members.Add(member);
-            }
+            foreach (var cls in namespaceGroup) 
+                members = members.Add(CreateDTOClass(compilation, cls));
 
-            var newDTO = CreateDTOClass(compilation, cls);
-
-            builder.Append(newDTO);
+            NameSyntax name = SyntaxFactory.ParseName(namespaceGroup.Key).WithLeadingTrivia(_whiteSpace);
+            builder.AppendLine(SyntaxFactory.NamespaceDeclaration(name, new(), new(), members).ToString());
         }
 
-
-        context.AddSource("SynoLib.g.cs", builder.ToString());
+        context.AddSource("SynoLibDTOGenerator.g.cs", builder.ToString());
     }
-    
-    private static SyntaxList<UsingDirectiveSyntax> FetchAllNonGeneratorUsings(IEnumerable<SyntaxTree> syntaxTrees) {
-        var usingDirectives = 
-            syntaxTrees.SelectMany(syntaxTree => {
-                if (!syntaxTree.TryGetRoot(out SyntaxNode? node) || node == null)
-                    return new List<UsingDirectiveSyntax>();
-                return node.DescendantNodes().OfType<UsingDirectiveSyntax>();
-            }).Distinct().ToList();
+
+    private static ClassDeclarationSyntax CreateDTOClass(Compilation compilation, ClassDeclarationSyntax cls) {
+        DTOModelData data = DTOModelData.GetDTOModelData(compilation, cls);
+
+        var tokenList = new SyntaxTokenList(SyntaxFactory.Token(_whiteSpace, SyntaxKind.PublicKeyword, new()),
+                                            SyntaxFactory.Token(_whiteSpace, SyntaxKind.SealedKeyword, _whiteSpace));
+
+
+        SyntaxToken identifier = SyntaxFactory.Identifier(_whiteSpace, data.DTOName, new());
+
+        SyntaxList<MemberDeclarationSyntax> members = data.Members;
+        members = members.AddRange(CreateConversions(data));
+
+        return SyntaxFactory.ClassDeclaration(new(), tokenList, identifier, null, null, null, new(), members);
+    }
+
+    #region Using and Namespace
+
+    private static string GetNamespace(ClassDeclarationSyntax cls) {
+        if (cls.Parent is not BaseNamespaceDeclarationSyntax namespaceSyntax)
+            return "global";
+        return namespaceSyntax.Name.ToString();
+    }
+
+    private static SyntaxList<UsingDirectiveSyntax> GetUsings(IEnumerable<ClassDeclarationSyntax> classes) {
+        var usingDirectives =
+            classes.SelectMany(c => ((CompilationUnitSyntax)c.SyntaxTree.GetRoot()).Usings)
+                   .Distinct();
 
         usingDirectives = usingDirectives.Where(u => {
             var name = u.NamespaceOrType;
@@ -96,26 +103,7 @@ internal sealed class TheGenerator : IIncrementalGenerator {
         return new SyntaxList<UsingDirectiveSyntax>(usingDirectives);
     }
 
-
-    private static ClassDeclarationSyntax CreateDTOClass(Compilation compilation, ClassDeclarationSyntax cls) {
-        DTOModelData data = DTOModelData.GetDTOModelData(compilation, cls);
-
-        var tokenList = new SyntaxTokenList(SyntaxFactory.Token(_whiteSpace, SyntaxKind.PublicKeyword, new()),
-                                            SyntaxFactory.Token(_whiteSpace, SyntaxKind.SealedKeyword, _whiteSpace));
-
-        SyntaxList<UsingDirectiveSyntax> usings = new(cls.SyntaxTree.GetRoot().DescendantNodes().OfType<UsingDirectiveSyntax>());
-
-        SyntaxToken identifier = SyntaxFactory.Identifier(_whiteSpace, $"DTO<{cls.Identifier}>", new());
-
-        SyntaxList<MemberDeclarationSyntax> members = new();
-        foreach (var member in cls.Members) {
-            if (member is FieldDeclarationSyntax or PropertyDeclarationSyntax)
-                members = members.Add(member);
-        }
-        members = members.AddRange(CreateConversions(data));
-
-        return SyntaxFactory.ClassDeclaration(new(), tokenList, identifier, null, null, null, new(), members);
-    }
+    #endregion
 
     #region Conversions
 
@@ -139,9 +127,9 @@ internal sealed class TheGenerator : IIncrementalGenerator {
                 ModelTypeSyntax.WithTrailingTrivia(_whiteSpace),
                 ModelParameterToken,
                 null));
-        if(data.conversion != 0) {
-            FieldDeclarationSyntax staticFunctoDTO = CreateStaticFuncConversor(data, "_toDTOFunc", "DTO<Product>", ModelParameterSyntax);
-            FieldDeclarationSyntax staticFunctoModel = CreateStaticFuncConversor(data, "_toModelFunc", "Product", DTOParameterSyntax);
+        if(data.conversion != ConversionForm.None) {
+            FieldDeclarationSyntax staticFunctoDTO = CreateStaticFuncConversor(data, "_toDTOFunc", data.DTOName, ModelParameterSyntax, false);
+            FieldDeclarationSyntax staticFunctoModel = CreateStaticFuncConversor(data, "_toModelFunc", data.ModelName, DTOParameterSyntax, true);
             members = members.AddRange([staticFunctoDTO, staticFunctoModel]);
         }
 
@@ -156,7 +144,7 @@ internal sealed class TheGenerator : IIncrementalGenerator {
                 ModelTypeSyntax, DTOParameterSyntax);
             members = members.AddRange([DTOtoModel, ModeltoDTO]);
         }
-        if (data.conversion.HasFlag(ConversionForm.Implicit)) {
+        else if (data.conversion.HasFlag(ConversionForm.Implicit)) {
             ConversionOperatorDeclarationSyntax ModeltoDTO = CreateConversionOperator(
                 "_toDTOFunc",
                 SyntaxKind.ImplicitKeyword,
@@ -171,16 +159,45 @@ internal sealed class TheGenerator : IIncrementalGenerator {
         return members;
     }
 
-    private static FieldDeclarationSyntax CreateStaticFuncConversor(DTOModelData data, string funcName, string returnTypeName, ParameterListSyntax parameterListSyntax) {
+    private static FieldDeclarationSyntax CreateStaticFuncConversor(DTOModelData data, string funcName, string returnTypeName, ParameterListSyntax parameterListSyntax, bool isToModel) {
         string paramName = parameterListSyntax.Parameters[0].Identifier.ValueText;
         string paramTypeName = parameterListSyntax.Parameters[0].Type!.ToString();
-        var equalValueSyntax = SyntaxFactory.EqualsValueClause(SyntaxFactory.ParenthesizedLambdaExpression(parameterListSyntax, CreateStaticConversionBlock(data, paramName)));
+        var equalValueSyntax = SyntaxFactory.EqualsValueClause(SyntaxFactory.ParenthesizedLambdaExpression(parameterListSyntax, CreateStaticConversionBlock(data, paramName, isToModel)));
         var variableSyntax = SyntaxFactory.VariableDeclarator(SyntaxFactory.Identifier(funcName), null, equalValueSyntax);
         var varDeclaration = SyntaxFactory.VariableDeclaration(SyntaxFactory.ParseTypeName($"Func<{paramTypeName}, {returnTypeName}>"), new SeparatedSyntaxList<VariableDeclaratorSyntax>().Add(variableSyntax));
-        var staticFunctoDTO = SyntaxFactory.FieldDeclaration(new(), _internalStatic, varDeclaration);
+        var staticFunctoDTO = SyntaxFactory.FieldDeclaration(new(), _privateStatic, varDeclaration);
         return staticFunctoDTO;
     }
 
+    private static BlockSyntax CreateStaticConversionBlock(DTOModelData data, string paramName, bool isToModel) {
+        SeparatedSyntaxList<ExpressionSyntax> assignments = new();
+        foreach (string property in data.PropertiesNames) {
+            var modelProperty = SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression, 
+                SyntaxFactory.IdentifierName(paramName), SyntaxFactory.Token(SyntaxKind.DotToken), SyntaxFactory.IdentifierName(property));
+            assignments = assignments.Add(
+                SyntaxFactory.AssignmentExpression(
+                    SyntaxKind.SimpleAssignmentExpression, 
+                    SyntaxFactory.IdentifierName(property), SyntaxFactory.Token(SyntaxKind.EqualsToken), modelProperty));
+
+        }
+        if(isToModel)
+            foreach (string ignoredRequired in data.IgnoredRequired) {
+                assignments = assignments.Add(
+                    SyntaxFactory.AssignmentExpression(
+                        SyntaxKind.SimpleAssignmentExpression, 
+                        SyntaxFactory.IdentifierName(ignoredRequired),
+                        SyntaxFactory.Token(SyntaxKind.EqualsToken),
+                        SyntaxFactory.LiteralExpression(SyntaxKind.NullLiteralExpression)));
+            }
+        var initializer = SyntaxFactory.InitializerExpression(SyntaxKind.ObjectInitializerExpression, expressions: assignments);
+        var dtoCreation = SyntaxFactory.ImplicitObjectCreationExpression(
+            SyntaxFactory.Token(SyntaxKind.NewKeyword).WithLeadingTrivia(_whiteSpace),
+            SyntaxFactory.ArgumentList(),
+            initializer);
+        var block = SyntaxFactory.Block(SyntaxFactory.ReturnStatement(dtoCreation));
+        return block;
+    }
+    
     private static ConversionOperatorDeclarationSyntax CreateConversionOperator(string funcName, SyntaxKind operatorKind, TypeSyntax DTOTypeSyntax, ParameterListSyntax ModelParameterSyntax) {
         var argument = SyntaxFactory.Argument(SyntaxFactory.IdentifierName(ModelParameterSyntax.Parameters[0].Identifier.ValueText));
         var invocation = SyntaxFactory.InvocationExpression(SyntaxFactory.IdentifierName(funcName), SyntaxFactory.ArgumentList(new SeparatedSyntaxList<ArgumentSyntax>().Add(argument)));
@@ -197,25 +214,6 @@ internal sealed class TheGenerator : IIncrementalGenerator {
             _semicolon);
     }
 
-    private static BlockSyntax CreateStaticConversionBlock(DTOModelData data, string paramName) {
-        SeparatedSyntaxList<ExpressionSyntax> assignments = new();
-        foreach (var property in data.PropertiesNames) {
-            var modelProperty = SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression, 
-                SyntaxFactory.IdentifierName(paramName), SyntaxFactory.Token(SyntaxKind.DotToken), SyntaxFactory.IdentifierName(property));
-            assignments = assignments.Add(
-                SyntaxFactory.AssignmentExpression(
-                    SyntaxKind.SimpleAssignmentExpression, 
-                    SyntaxFactory.IdentifierName(property), SyntaxFactory.Token(SyntaxKind.EqualsToken), modelProperty));
-
-        }
-        var initializer = SyntaxFactory.InitializerExpression(SyntaxKind.ObjectInitializerExpression, expressions: assignments);
-        var dtoCreation = SyntaxFactory.ImplicitObjectCreationExpression(
-            SyntaxFactory.Token(SyntaxKind.NewKeyword).WithLeadingTrivia(_whiteSpace),
-            SyntaxFactory.ArgumentList(),
-            initializer);
-        var block = SyntaxFactory.Block(SyntaxFactory.ReturnStatement(dtoCreation));
-        return block;
-    }
 
     #endregion
 
@@ -231,6 +229,8 @@ internal sealed class TheGenerator : IIncrementalGenerator {
 
     private static readonly SyntaxTokenList _publicStatic = new(NewToken(new(), SyntaxKind.PublicKeyword, _whiteSpace), NewToken(new(), SyntaxKind.StaticKeyword, _whiteSpace));
     private static readonly SyntaxTokenList _internalStatic = new(NewToken(new(), SyntaxKind.InternalKeyword, _whiteSpace), NewToken(new(), SyntaxKind.StaticKeyword, _whiteSpace));
+    private static readonly SyntaxTokenList _privateStatic = new(NewToken(new(), SyntaxKind.PrivateKeyword, _whiteSpace), NewToken(new(), SyntaxKind.StaticKeyword, _whiteSpace));
+
     private static readonly SyntaxToken _operator =  NewToken(new(), SyntaxKind.OperatorKeyword, _whiteSpace);
     private static readonly SyntaxToken _semicolon = NewToken(SyntaxKind.SemicolonToken);
 
@@ -244,60 +244,4 @@ internal sealed class TheGenerator : IIncrementalGenerator {
     private static SyntaxTrivia NewTrivia(SyntaxKind trivia, string text) => SyntaxFactory.SyntaxTrivia(trivia, text);
 
     #endregion
-}
-
-internal record struct DTOModelData {
-    public string ModelName { get; set; }
-    public string DTOName => $"DTO<{ModelName}>";
-
-    public List<string> PropertiesNames { get; set; }
-    public SyntaxList<MemberDeclarationSyntax> Members { get; set; }
-
-    public ConversionForm conversion;
-    
-    public static DTOModelData GetDTOModelData(Compilation compilation, ClassDeclarationSyntax cls) {
-        var data = new DTOModelData() {
-            ModelName = cls.Identifier.ValueText,
-            conversion = GetConversionForm(compilation, cls),
-            Members = GetPropertiesAndFields(cls)
-        };
-        return data with { PropertiesNames = data.Members.Select(m => m.ChildTokens().Single(t => t.IsKind(SyntaxKind.IdentifierToken)).ValueText).ToList() };
-    }
-
-    private static ConversionForm GetConversionForm(Compilation compilation, ClassDeclarationSyntax cls) {
-        var semantics = compilation.GetSemanticModel(cls.SyntaxTree);
-        var attributeSyntax = cls.AttributeLists.SelectMany(al => al.Attributes).Single(a => a.Name.ToString() == "HasDTO");
-        var attribute = GetAttributeFromSyntax<HasDTOAttribute>(semantics, attributeSyntax);
-        return attribute.ConversionForm;
-    }
-
-    private static TAttr GetAttributeFromSyntax<TAttr>(SemanticModel semanticModel, AttributeSyntax attributeSyntax) where TAttr : Attribute {
-        SeparatedSyntaxList<AttributeArgumentSyntax> arguments =  attributeSyntax.ArgumentList?.Arguments ?? new();
-        List<string> typeNames = new();
-        List<object> parameters = new();
-        foreach (var argument in arguments) {
-            var operation = semanticModel.GetOperation(argument.Expression)!;
-            typeNames.Add(operation!.Type!.Name);
-            parameters.Add(operation.ConstantValue!.Value!);
-        }
-        var constructors = typeof(TAttr).GetConstructors();
-        var constructorInfo = constructors.Single(c => {
-            var paramTypes = c.GetParameters().Select(p => p.ParameterType.Name).OrderBy(p => p);
-            return paramTypes.SequenceEqual(typeNames.OrderBy(p => p));
-        });
-        return (TAttr)constructorInfo.Invoke([.. parameters]);
-    }
-
-    private static SyntaxList<MemberDeclarationSyntax> GetPropertiesAndFields(ClassDeclarationSyntax cls) {
-        SyntaxList<MemberDeclarationSyntax> members = new();
-        foreach (var member in cls.Members) {
-            if (member is not (FieldDeclarationSyntax or PropertyDeclarationSyntax))
-                continue;
-
-            var attributes = member.AttributeLists.SelectMany(al => al.Attributes).Select(a => ((IdentifierNameSyntax)a.Name).Identifier.ValueText).ToList();
-            if (!attributes.Any(a => a is "DTOIgnore" or "DTOIgnoreAttribute"))
-                members = members.Add(member);
-        }
-        return members;
-    }
 }
