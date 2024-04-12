@@ -1,4 +1,5 @@
-﻿using System;
+﻿using SynoLib.Generators.Visitors;
+using System;
 
 namespace SynoLib.Generators.Attributes;
 
@@ -28,6 +29,16 @@ public sealed class HasDTOAttribute : Attribute {
     /// Tells the generator that this class should have a DTO
     /// </summary>
     public HasDTOAttribute() { }
+    #region Internal Methods
+    internal static HasDTOAttribute GetAttributeFromData(AttributeData data) {
+        Type attributeType = typeof(HasDTOAttribute);
+        HasDTOAttribute attribute = new();
+        foreach (var (name, value) in data.PropertyArguments)
+            attributeType.GetProperty(name).SetValue(attribute, value);
+        
+        return attribute;
+    }
+    #endregion
 }
 
 /// <summary>
@@ -44,21 +55,21 @@ public enum ConversionForm {
     /// Model can be converted explicitly.<br/>
     /// <example>
     /// e.g. 
-    /// <c>DTOType dto = (DTOType)model;</c>
+    /// <c>ConvertedType dto = (ConvertedType)model;</c>
     /// </example>
     /// </summary>
     Explicit = 1,
     /// <summary> Model and DTO can be converted implicitly.<br/>
     /// <example>
     /// e.g. 
-    /// <c>DTOType dto = model;</c>
+    /// <c>ConvertedType dto = model;</c>
     /// </example>
     /// </summary>
     Implicit = 2,
     /// <summary> A static method on the DTO class will be created to handle conversions.<br/>
     /// <example>
     /// e.g.
-    /// <c>DTOType dto = DTOType.ToDTO(model);</c>
+    /// <c>ConvertedType dto = ConvertedType.ToDTO(model);</c>
     /// </example>
     /// </summary>
     StaticMethods = 4,

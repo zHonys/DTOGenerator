@@ -19,12 +19,11 @@ namespace SynoLib.Generators;
 [Generator]
 internal sealed class TheGenerator : IIncrementalGenerator {
     public void Initialize(IncrementalGeneratorInitializationContext context) {
-
         var provider = context.SyntaxProvider.CreateSyntaxProvider(
             predicate: ShouldHaveDTO,
             transform: static (ctx,  _) => (ClassDeclarationSyntax)ctx.Node
         ).Where(m => m is not null);
-        
+
         var compilation = context.CompilationProvider.Combine(provider.Collect());
 
         context.RegisterSourceOutput(compilation, Execute);
@@ -109,6 +108,8 @@ internal sealed class TheGenerator : IIncrementalGenerator {
 
     private static SyntaxList<MemberDeclarationSyntax> CreateConversions(DTOModelData data) {
         SyntaxList<MemberDeclarationSyntax> members = new();
+        if (data.conversion == ConversionForm.None)
+            return members;
 
         TypeSyntax DTOTypeSyntax = SyntaxFactory.ParseTypeName(data.DTOName);
         SyntaxToken DTOParameterToken = SyntaxFactory.Identifier("dto");
@@ -127,33 +128,52 @@ internal sealed class TheGenerator : IIncrementalGenerator {
                 ModelTypeSyntax.WithTrailingTrivia(_whiteSpace),
                 ModelParameterToken,
                 null));
-        if(data.conversion != ConversionForm.None) {
-            FieldDeclarationSyntax staticFunctoDTO = CreateStaticFuncConversor(data, "_toDTOFunc", data.DTOName, ModelParameterSyntax, false);
-            FieldDeclarationSyntax staticFunctoModel = CreateStaticFuncConversor(data, "_toModelFunc", data.ModelName, DTOParameterSyntax, true);
-            members = members.AddRange([staticFunctoDTO, staticFunctoModel]);
-        }
+
+        FieldDeclarationSyntax staticFunctoDTO = CreateStaticFuncConversor(data, "_toDTOFunc", data.DTOName, ModelParameterSyntax, false);
+        FieldDeclarationSyntax staticFunctoModel = CreateStaticFuncConversor(data, "_toModelFunc", data.ModelName, DTOParameterSyntax, true);
+        members = members.AddRange([staticFunctoDTO, staticFunctoModel]);
+        var toDTOExpression = CreateArrowFuncCall("_toDTOFunc", ModelParameterSyntax);
+        var toModelExpression = CreateArrowFuncCall("_toModelFunc", DTOParameterSyntax);
 
         if (data.conversion.HasFlag(ConversionForm.Explicit)) {
-            ConversionOperatorDeclarationSyntax ModeltoDTO = CreateConversionOperator(
-                "_toDTOFunc",
+            ConversionOperatorDeclarationSyntax DTOToModel = CreateConversionOperator(
                 SyntaxKind.ExplicitKeyword,
-                DTOTypeSyntax, ModelParameterSyntax);
-            ConversionOperatorDeclarationSyntax DTOtoModel = CreateConversionOperator(
-                "_toModelFunc",
+                ModelTypeSyntax, DTOParameterSyntax,
+                toModelExpression);
+            ConversionOperatorDeclarationSyntax ModelToDTO = CreateConversionOperator(
                 SyntaxKind.ExplicitKeyword,
-                ModelTypeSyntax, DTOParameterSyntax);
-            members = members.AddRange([DTOtoModel, ModeltoDTO]);
+                DTOTypeSyntax, ModelParameterSyntax,
+                toDTOExpression);
+            members = members.AddRange([DTOToModel, ModelToDTO]);
         }
         else if (data.conversion.HasFlag(ConversionForm.Implicit)) {
-            ConversionOperatorDeclarationSyntax ModeltoDTO = CreateConversionOperator(
-                "_toDTOFunc",
+            ConversionOperatorDeclarationSyntax DTOToModel = CreateConversionOperator(
                 SyntaxKind.ImplicitKeyword,
-                DTOTypeSyntax, ModelParameterSyntax);
-            ConversionOperatorDeclarationSyntax DTOtoModel = CreateConversionOperator(
+                ModelTypeSyntax, DTOParameterSyntax,
+                toModelExpression);
+            ConversionOperatorDeclarationSyntax ModelToDTO = CreateConversionOperator(
+                SyntaxKind.ImplicitKeyword,
+                DTOTypeSyntax, ModelParameterSyntax,
+                toDTOExpression);
+            members = members.AddRange([DTOToModel, ModelToDTO]);
+        }
+        if(data.conversion.HasFlag(ConversionForm.StaticMethods)) {
+            MethodDeclarationSyntax DTOToModel = CreateStaticConversion(
+                "ToDTO",
+                DTOTypeSyntax, ModelParameterSyntax,
+                toDTOExpression);
+            MethodDeclarationSyntax ModelToDTO = CreateStaticConversion(
+                "ToModel",
+                ModelTypeSyntax, DTOParameterSyntax,
+                toModelExpression);
+            members = members.AddRange([DTOToModel, ModelToDTO]);
+        }
+        if (data.conversion.HasFlag(ConversionForm.ReferenceMethods)) {
+            MethodDeclarationSyntax DTOToModel = CreateReferenceConversion(
                 "_toModelFunc",
-                SyntaxKind.ImplicitKeyword,
-                ModelTypeSyntax, DTOParameterSyntax);
-            members = members.AddRange([DTOtoModel, ModeltoDTO]);
+                "ToModel",
+                ModelTypeSyntax);
+            members = members.Add(DTOToModel);
         }
 
         return members;
@@ -163,7 +183,7 @@ internal sealed class TheGenerator : IIncrementalGenerator {
         string paramName = parameterListSyntax.Parameters[0].Identifier.ValueText;
         string paramTypeName = parameterListSyntax.Parameters[0].Type!.ToString();
         var equalValueSyntax = SyntaxFactory.EqualsValueClause(SyntaxFactory.ParenthesizedLambdaExpression(parameterListSyntax, CreateStaticConversionBlock(data, paramName, isToModel)));
-        var variableSyntax = SyntaxFactory.VariableDeclarator(SyntaxFactory.Identifier(funcName), null, equalValueSyntax);
+        var variableSyntax = SyntaxFactory.VariableDeclarator(SyntaxFactory.Identifier(funcName),null, equalValueSyntax);
         var varDeclaration = SyntaxFactory.VariableDeclaration(SyntaxFactory.ParseTypeName($"Func<{paramTypeName}, {returnTypeName}>"), new SeparatedSyntaxList<VariableDeclaratorSyntax>().Add(variableSyntax));
         var staticFunctoDTO = SyntaxFactory.FieldDeclaration(new(), _privateStatic, varDeclaration);
         return staticFunctoDTO;
@@ -171,7 +191,7 @@ internal sealed class TheGenerator : IIncrementalGenerator {
 
     private static BlockSyntax CreateStaticConversionBlock(DTOModelData data, string paramName, bool isToModel) {
         SeparatedSyntaxList<ExpressionSyntax> assignments = new();
-        foreach (string property in data.PropertiesNames) {
+        foreach (string property in data.MemberNames) {
             var modelProperty = SyntaxFactory.MemberAccessExpression(SyntaxKind.SimpleMemberAccessExpression, 
                 SyntaxFactory.IdentifierName(paramName), SyntaxFactory.Token(SyntaxKind.DotToken), SyntaxFactory.IdentifierName(property));
             assignments = assignments.Add(
@@ -198,22 +218,59 @@ internal sealed class TheGenerator : IIncrementalGenerator {
         return block;
     }
     
-    private static ConversionOperatorDeclarationSyntax CreateConversionOperator(string funcName, SyntaxKind operatorKind, TypeSyntax DTOTypeSyntax, ParameterListSyntax ModelParameterSyntax) {
-        var argument = SyntaxFactory.Argument(SyntaxFactory.IdentifierName(ModelParameterSyntax.Parameters[0].Identifier.ValueText));
+    private static ArrowExpressionClauseSyntax CreateArrowFuncCall(string funcName, ParameterListSyntax parameters) {
+        var argument = SyntaxFactory.Argument(SyntaxFactory.IdentifierName(parameters.Parameters[0].Identifier.ValueText));
         var invocation = SyntaxFactory.InvocationExpression(SyntaxFactory.IdentifierName(funcName), SyntaxFactory.ArgumentList(new SeparatedSyntaxList<ArgumentSyntax>().Add(argument)));
-        var expression = SyntaxFactory.ArrowExpressionClause(invocation);
+        return SyntaxFactory.ArrowExpressionClause(invocation);
+    }
+
+    private static ConversionOperatorDeclarationSyntax CreateConversionOperator(
+        SyntaxKind operatorKind, TypeSyntax returnType, ParameterListSyntax parameters, ArrowExpressionClauseSyntax expression) {
         return SyntaxFactory.ConversionOperatorDeclaration(
             new(),
             _publicStatic,
             SyntaxFactory.Token(new(), operatorKind, _whiteSpace),
             _operator,
-            DTOTypeSyntax.WithLeadingTrivia(_whiteSpace),
-            ModelParameterSyntax,
+            returnType.WithLeadingTrivia(_whiteSpace),
+            parameters,
             null,
             expression,
             _semicolon);
     }
 
+    private static MethodDeclarationSyntax CreateStaticConversion(
+        string methodName, TypeSyntax returnType, ParameterListSyntax parameters, ArrowExpressionClauseSyntax expression) {
+        return SyntaxFactory.MethodDeclaration(
+            new(),
+            _publicStatic,
+            returnType.WithLeadingTrivia(_whiteSpace).WithTrailingTrivia(_whiteSpace),
+            null,
+            SyntaxFactory.Identifier(methodName),
+            null,
+            parameters,
+            new(),
+            null,
+            expression,
+            _semicolon);
+    }
+
+    private static MethodDeclarationSyntax CreateReferenceConversion(string funcName, string methodName, TypeSyntax returnType) {
+        var argument = SyntaxFactory.Argument(SyntaxFactory.ThisExpression());
+        var invocation = SyntaxFactory.InvocationExpression(SyntaxFactory.IdentifierName(funcName), SyntaxFactory.ArgumentList(new SeparatedSyntaxList<ArgumentSyntax>().Add(argument)));
+        var expression = SyntaxFactory.ArrowExpressionClause(invocation);
+        return SyntaxFactory.MethodDeclaration(
+            new(),
+            _publicStatic,
+            returnType.WithLeadingTrivia(_whiteSpace).WithTrailingTrivia(_whiteSpace),
+            null,
+            SyntaxFactory.Identifier(methodName),
+            null,
+            SyntaxFactory.ParameterList(),
+            new(),
+            null,
+            expression,
+            _semicolon);
+    }
 
     #endregion
 
