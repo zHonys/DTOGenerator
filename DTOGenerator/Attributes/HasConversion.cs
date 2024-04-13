@@ -1,11 +1,11 @@
-﻿using SynoLib.Generators.Visitors;
+﻿using SynoLib.Generators.DTOGenerator.Visitors;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Xml.Linq;
 
-namespace SynoLib.Generators.Attributes;
+namespace SynoLib.Generators.DTOGenerator.Attributes;
 
 /// <summary>
 /// Specifies that this varible will swich type in this class DTO
@@ -38,11 +38,11 @@ sealed public class HasConversionAttribute : Attribute {
         };
 
         for (int i = 0; i < 2; i++) {
-            var arg = data.FieldArguments[i];
-            int index = data.FieldArguments.ToList().FindIndex(t => t.name == arg.name);
+            var (name, value) = data.FieldArguments[i];
+            int index = data.FieldArguments.ToList().FindIndex(t => t.name == name);
 
             index = index != -1 ? i : index;
-            arguments[index].value = arg.value;
+            arguments[index].value = value;
         }
         return new HasConversionAttribute((HasConversionForm)arguments[0].value!, (string)arguments[1].value!);
     }

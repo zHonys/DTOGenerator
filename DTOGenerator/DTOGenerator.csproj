@@ -8,7 +8,22 @@
     <IsRoslynComponent>true</IsRoslynComponent>
     <LangVersion>latest</LangVersion>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
-    <RootNamespace>SynoLib.Generators</RootNamespace>
+    <RootNamespace>SynoLib.Generators.$(AssemblyName)</RootNamespace>
+    <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+    <Authors>zHonys </Authors>
+    <Title>DTOGenerator</Title>
+    <PackageId>SynoLib.Generators.$(AssemblyName)</PackageId>
+    <Description>Source generator that automatically generates DTOs based on existing models</Description>
+    <Copyright>Copyright (c) zHonys 2024</Copyright>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>SourceGenerator DTO</PackageTags>
+    <PackageReleaseNotes>Initial release</PackageReleaseNotes>
+    <PackageOutputPath>$(OutputPath)\package</PackageOutputPath>
+    <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+    <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
+    <IncludeSymbols>True</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -21,6 +36,13 @@
 
   <ItemGroup>
     <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="LICENSE.txt">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
   </ItemGroup>
 
 </Project>

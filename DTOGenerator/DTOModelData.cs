@@ -1,15 +1,15 @@
 ﻿using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis;
-using SynoLib.Generators.Attributes;
+using SynoLib.Generators.DTOGenerator.Attributes;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis.CSharp;
-using SynoLib.Generators.Visitors;
+using SynoLib.Generators.DTOGenerator.Visitors;
 
-namespace SynoLib.Generators;
+namespace SynoLib.Generators.DTOGenerator;
 
 internal record struct DTOModelData {
     public string ModelName { get; set; }

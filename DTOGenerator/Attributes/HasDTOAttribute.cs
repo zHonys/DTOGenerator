@@ -1,7 +1,7 @@
-﻿using SynoLib.Generators.Visitors;
+﻿using SynoLib.Generators.DTOGenerator.Visitors;
 using System;
 
-namespace SynoLib.Generators.Attributes;
+namespace SynoLib.Generators.DTOGenerator.Attributes;
 
 /// <summary>
 /// Tells the generator that this class should have a DTO
@@ -81,5 +81,5 @@ public enum ConversionForm {
     /// </example><br/>
     /// Note that this only creates a conversion from DTO to Model, and not Model to DTO
     /// </summary>
-    ReferenceMethods = 8,
+    //ReferenceMethods = 8,
 }
