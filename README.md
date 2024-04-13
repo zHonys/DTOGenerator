@@ -1,3 +1,4 @@
+This package can be download using [nuget](https://www.nuget.org/packages/SynoLib.Generators.DTOGenerator)
 # DTOGenerator
 Source generator that automatically generates DTOs based on existing models
 Has 4 attributes:
