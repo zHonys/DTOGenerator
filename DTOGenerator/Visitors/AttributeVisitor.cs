@@ -6,12 +6,13 @@ using SynoLib.Generators.Attributes;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
 
 namespace SynoLib.Generators.Visitors;
 internal sealed class AttributeVisitor : CSharpSyntaxVisitor<List<AttributeData>> {
-    private readonly HashSet<string> _attributeNames;
+    private readonly ImmutableHashSet<string> _attributeNames;
     private readonly SemanticModel _semantics;
 
     public List<AttributeData> AttributesData { get; } = [];

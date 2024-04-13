@@ -2,6 +2,7 @@
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using SynoLib.Generators.Attributes;
+using SynoLib.Generators.Visitors;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -69,6 +70,8 @@ internal sealed class TheGenerator : IIncrementalGenerator {
         SyntaxToken identifier = SyntaxFactory.Identifier(_whiteSpace, data.DTOName, new());
 
         SyntaxList<MemberDeclarationSyntax> members = data.Members;
+        members = members.AddRange(data.WithConversion.Select(d => d.Member));
+        members = members.AddRange(data.WithIndirectConversion.Select(d => d.Member));
         members = members.AddRange(CreateConversions(data));
 
         return SyntaxFactory.ClassDeclaration(new(), tokenList, identifier, null, null, null, new(), members);
@@ -200,6 +203,8 @@ internal sealed class TheGenerator : IIncrementalGenerator {
                     SyntaxFactory.IdentifierName(property), SyntaxFactory.Token(SyntaxKind.EqualsToken), modelProperty));
 
         }
+        assignments = assignments.AddRange(CreateWithConversion(data, paramName, isToModel));
+        assignments = assignments.AddRange(CreateWithIndirectConversion(data, paramName));
         if(isToModel)
             foreach (string ignoredRequired in data.IgnoredRequired) {
                 assignments = assignments.Add(
@@ -217,7 +222,77 @@ internal sealed class TheGenerator : IIncrementalGenerator {
         var block = SyntaxFactory.Block(SyntaxFactory.ReturnStatement(dtoCreation));
         return block;
     }
-    
+
+    private static IEnumerable<ExpressionSyntax> CreateWithConversion(DTOModelData data, string paramName, bool isToModel) {
+        List<ExpressionSyntax> expressions = new();
+        foreach (var item in data.WithConversion) {
+            string methodName = isToModel ? "ToModel" : "ToDTO";
+            TypeSyntax finalType = isToModel ? item.TargetType : SyntaxFactory.ParseTypeName(item.Attribute.ConvertedType);
+            var conversionExpression = GetConversionExpression(data.DTOName, finalType, item, methodName, paramName);
+            var expression = SyntaxFactory.AssignmentExpression(
+                SyntaxKind.SimpleAssignmentExpression,
+                SyntaxFactory.IdentifierName(item.AttrData.TargetName),
+                conversionExpression);
+            expressions.Add(expression);
+        }
+        return expressions;
+    }
+
+    private static IEnumerable<ExpressionSyntax> CreateWithIndirectConversion(DTOModelData data, string paramName) {
+        List<ExpressionSyntax> expressions = new();
+        foreach (var item in data.WithIndirectConversion) {
+            string converterType = item.Attribute.ConverterType ?? data.ModelName;
+            var conversionExpression = ConversionWithStaticMethod(converterType, item.Attribute.MethodsName, paramName, item.AttrData.TargetName);
+            var expression = SyntaxFactory.AssignmentExpression(
+                SyntaxKind.SimpleAssignmentExpression,
+                SyntaxFactory.IdentifierName(item.AttrData.TargetName),
+                conversionExpression);
+            expressions.Add(expression);
+        }
+        return expressions;
+    }
+
+    private static ExpressionSyntax GetConversionExpression(string dtoName, TypeSyntax finalType, MemberHasConversion conversionData, string methodName, string paramName) {
+        return conversionData.Attribute.ConversionForm switch {
+            HasConversionForm.Explicit      => ConversionWithExplicit(finalType, paramName, conversionData.AttrData.TargetName),
+            HasConversionForm.Implicit      => ConversionWithImplicit(paramName, conversionData.AttrData.TargetName),
+            HasConversionForm.StaticMethods => ConversionWithStaticMethod(conversionData.Attribute.ConvertedType, methodName, paramName, conversionData.AttrData.TargetName),
+            _ => throw new ArgumentException($"HasConversionForm of {conversionData.AttrData.TargetName} is not valid"),
+        };
+    }
+
+    private static ExpressionSyntax ConversionWithExplicit(TypeSyntax type, string paramName, string memberName) {
+        var memberIdentifier = SyntaxFactory.IdentifierName(memberName);
+        var memberAccess = SyntaxFactory.MemberAccessExpression(
+            SyntaxKind.SimpleMemberAccessExpression,
+            SyntaxFactory.IdentifierName(paramName),
+            memberIdentifier);
+        return SyntaxFactory.CastExpression(type, memberAccess);
+    }
+
+    private static ExpressionSyntax ConversionWithImplicit(string paramName, string memberName) {
+        return SyntaxFactory.MemberAccessExpression(
+            SyntaxKind.SimpleMemberAccessExpression,
+            SyntaxFactory.IdentifierName(paramName),
+            SyntaxFactory.IdentifierName(memberName));
+    }
+
+    private static ExpressionSyntax ConversionWithStaticMethod(string typeName, string methodName, string paramName, string memberName) {
+        var paramAccess = SyntaxFactory.MemberAccessExpression(
+            SyntaxKind.SimpleMemberAccessExpression,
+            SyntaxFactory.IdentifierName(paramName),
+            SyntaxFactory.IdentifierName(memberName));
+        var argument = SyntaxFactory.ArgumentList(SyntaxFactory.SeparatedList([SyntaxFactory.Argument(paramAccess)]));
+        return SyntaxFactory.InvocationExpression(
+            SyntaxFactory.MemberAccessExpression(
+                SyntaxKind.SimpleMemberAccessExpression,
+                SyntaxFactory.IdentifierName(typeName),
+                NewToken(SyntaxKind.DotToken),
+                SyntaxFactory.IdentifierName(methodName)),
+            argument
+        );
+    }
+
     private static ArrowExpressionClauseSyntax CreateArrowFuncCall(string funcName, ParameterListSyntax parameters) {
         var argument = SyntaxFactory.Argument(SyntaxFactory.IdentifierName(parameters.Parameters[0].Identifier.ValueText));
         var invocation = SyntaxFactory.InvocationExpression(SyntaxFactory.IdentifierName(funcName), SyntaxFactory.ArgumentList(new SeparatedSyntaxList<ArgumentSyntax>().Add(argument)));

@@ -5,6 +5,7 @@ using SynoLib.Generators.Attributes;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Xml.Linq;
 
@@ -12,7 +13,7 @@ namespace SynoLib.Generators.Visitors;
 internal class ModelMemberVisitor : CSharpSyntaxVisitor{
     private readonly AttributeVisitor _attributeVisitor;
     public List<MemberDeclarationSyntax> Members { get; } = [];
-    public List<string> MemberNames => Members.Select(x => x.Accept(IdentifierNameVisitor.Instance) ?? "").ToList();
+    public List<string> MemberNames { get; } = [];
 
     public List<string> IgnoredRequiredMembersNames { get; } = [];
 
@@ -41,67 +42,124 @@ internal class ModelMemberVisitor : CSharpSyntaxVisitor{
     public override void VisitPropertyDeclaration(PropertyDeclarationSyntax node) {
         base.VisitPropertyDeclaration(node);
         var attributes = node.Accept(_attributeVisitor);
-        if (attributes?.Count == 0)
+
+        node = node.WithModifiers(SyntaxFactory.TokenList(node.Modifiers.Where(m => m.RawKind != (int)SyntaxKind.VirtualKeyword)));
+        if (attributes?.Count == 0) {
             Members.Add(node);
-        if (HasAttribute(attributes, "DTOIgnore") && 
-            node.Modifiers.Contains(SyntaxFactory.Token(SyntaxKind.RequiredKeyword))) {
+            if (node.AccessorList?.Accessors.Any(a => a.Keyword.IsKind(SyntaxKind.SetKeyword)) is true)
+                MemberNames.Add(node.Accept(IdentifierNameVisitor.Instance)!);
+        }
+        
+        if (HasAttribute(attributes, "DTOIgnore") &&
+            node.Modifiers.Any(m => m.RawKind == (int)SyntaxKind.RequiredKeyword)) {
             IgnoredRequiredMembersNames.Add(node.Identifier.Text);
             return;
         }
-        if (HasAttribute(attributes, "HasConversion")) {
-            var attribute = HasConversionAttribute.GetAttributeFromData(
-                attributes.Single(a => a.AttributeName == "HasConversion"));
-            MembersWithConversion.Add(new(node, attribute));
+
+        node = RemoveGeneratorAttributesProperty(node);
+        if (TryGetSingleAttribute(attributes!, "HasConversion", out AttributeData attributeData)) {
+            var attribute = HasConversionAttribute.GetAttributeFromData(attributeData);
+            var updatedNode = UpdatePropertyType(node, attribute.ConvertedType);
+            MembersWithConversion.Add(new(attributeData, node.Type, updatedNode, attribute));
             return;
         }
-        if (HasAttribute(attributes, "HasIndirectConversion")) {
-            var attribute = HasIndirectConversionAttribute.GetAttributeFromData(
-                attributes.Single(a => a.AttributeName == "HasIndirectConversion"));
-            MembersWithIndirectConversion.Add(new(node, attribute));
+        if (TryGetSingleAttribute(attributes!, "HasIndirectConversion", out attributeData)) {
+            var attribute = HasIndirectConversionAttribute.GetAttributeFromData(attributeData);
+            var updatedNode = UpdatePropertyType(node, attribute.ConvertedType);
+            MembersWithIndirectConversion.Add(new(attributeData, node.Type, updatedNode, attribute));
             return;
         }
     }
     public override void VisitFieldDeclaration(FieldDeclarationSyntax node) {
         base.VisitFieldDeclaration(node);
         var attributes = node.Accept(_attributeVisitor);
+
+        node = node.WithModifiers(SyntaxFactory.TokenList(node.Modifiers.Where(m => m.RawKind != (int)SyntaxKind.VirtualKeyword)));
         if (attributes?.Count == 0)
             Members.Add(node);
         if (HasAttribute(attributes, "DTOIgnore") &&
-            node.Modifiers.Contains(SyntaxFactory.Token(SyntaxKind.RequiredKeyword))) {
+            node.Modifiers.Any(m => m.RawKind == (int)SyntaxKind.RequiredKeyword)) {
             IgnoredRequiredMembersNames.Add(node.Declaration.Variables[0].Identifier.Text);
             return;
         }
-        if (HasAttribute(attributes, "HasConversion")) {
-            var attribute = HasConversionAttribute.GetAttributeFromData(
-                attributes.Single(a => a.AttributeName == "HasConversion"));
-            MembersWithConversion.Add(new(node, attribute));
+        node = RemoveGeneratorAttributesField(node);
+        if (TryGetSingleAttribute(attributes!, "HasConversion", out AttributeData attributeData)) {
+            var attribute = HasConversionAttribute.GetAttributeFromData(attributeData);
+            var updatedNode = UpdateFieldyType(node, attribute.ConvertedType);
+            
+            MembersWithConversion.Add(new(attributeData, node.Declaration.Type, updatedNode, attribute));
             return;
         }
-        if (HasAttribute(attributes, "HasIndirectConversion")) {
-            var attribute = HasIndirectConversionAttribute.GetAttributeFromData(
-                attributes.Single(a => a.AttributeName == "HasIndirectConversion"));
-            MembersWithIndirectConversion.Add(new(node, attribute));
+        if (TryGetSingleAttribute(attributes!, "HasIndirectConversion", out attributeData)) {
+            var attribute = HasIndirectConversionAttribute.GetAttributeFromData(attributeData);
+            var updatedNode = UpdateFieldyType(node, attribute.ConvertedType);
+            MembersWithIndirectConversion.Add(new(attributeData, node.Declaration.Type, updatedNode, attribute));
             return;
         }
     }
-
+    #region Private Methods
     private bool HasAttribute(List<AttributeData>? data, string attributeName) {
         return data.Any(a => a.AttributeName.Equals(attributeName));
     }
+    private bool TryGetSingleAttribute(IEnumerable<AttributeData> attributes, string attributeName, out AttributeData attributeData) {
+        try {
+            attributeData = attributes.Single(a => a.AttributeName.Equals(attributeName));
+            return true;
+        } catch (Exception) {
+            attributeData = new();
+            return false;
+        }
+    }
+    private PropertyDeclarationSyntax UpdatePropertyType(PropertyDeclarationSyntax node, string typeName) {
+        return node.WithType(SyntaxFactory.ParseTypeName(typeName, consumeFullText: true).WithTrailingTrivia(SyntaxFactory.Whitespace(" ")));
+    }
+    private FieldDeclarationSyntax UpdateFieldyType(FieldDeclarationSyntax node, string typeName) {
+        var newType = SyntaxFactory.ParseTypeName(typeName, consumeFullText: true);
+        return node.WithDeclaration(node.Declaration.WithType(newType).WithTrailingTrivia(SyntaxFactory.Whitespace(" ")));
+    }
+    private PropertyDeclarationSyntax RemoveGeneratorAttributesProperty(PropertyDeclarationSyntax node) {
+        HashSet<string> names = ["HasConversion", "HasConversionAttribute", "HasIndirectConversion", "HasIndirectConversionAttribute"];
+        var attributes = node.AttributeLists
+            .SelectMany(al => al.Attributes)
+            .Where(a => !names.Contains(a.Name.ToString()));
+        var attributeList = SyntaxFactory.AttributeList(SyntaxFactory.SeparatedList(attributes));
+        if (attributeList.Attributes.Count > 0)
+            return node.WithAttributeLists(SyntaxFactory.List([attributeList]));
+        return node.WithAttributeLists(new());
+    }
+    private FieldDeclarationSyntax RemoveGeneratorAttributesField(FieldDeclarationSyntax node) {
+        HashSet<string> names = ["HasConversion", "HasConversionAttribute", "HasIndirectConversion", "HasIndirectConversionAttribute"];
+        var attributes = node.AttributeLists
+            .SelectMany(al => al.Attributes)
+            .Where(a => !names.Contains(a.Name.ToString()));
+        var attributeList = SyntaxFactory.AttributeList(SyntaxFactory.SeparatedList(attributes));
+        if (attributeList.Attributes.Count > 0)
+            return node.WithAttributeLists(SyntaxFactory.List([attributeList]));
+        return node.WithAttributeLists(new());
+    }
+    #endregion
 }
 
-public record struct MemberHasConversion {
+internal record struct MemberHasConversion {
+    public AttributeData AttrData { get; set; }
+    public TypeSyntax TargetType { get; set; }
     public MemberDeclarationSyntax Member { get; set; }
     public HasConversionAttribute Attribute { get; set; }
-    public MemberHasConversion(MemberDeclarationSyntax member, HasConversionAttribute attribute) {
+    public MemberHasConversion(AttributeData attributeData, TypeSyntax targetType, MemberDeclarationSyntax member, HasConversionAttribute attribute) {
+        AttrData = attributeData;
+        TargetType = targetType;
         Member = member;
         Attribute = attribute;
     }
 }
-public record struct MemberHasIndirectConversion {
+internal record struct MemberHasIndirectConversion {
+    public AttributeData AttrData { get; set; }
+    public TypeSyntax TargetType { get; set; }
     public MemberDeclarationSyntax Member { get; set; }
     public HasIndirectConversionAttribute Attribute { get; set; }
-    public MemberHasIndirectConversion(MemberDeclarationSyntax member, HasIndirectConversionAttribute attribute) {
+    public MemberHasIndirectConversion(AttributeData attributeData, TypeSyntax targetType, MemberDeclarationSyntax member, HasIndirectConversionAttribute attribute) {
+        AttrData = attributeData;
+        TargetType = targetType;
         Member = member;
         Attribute = attribute;
     }

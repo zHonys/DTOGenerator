@@ -18,6 +18,8 @@ internal record struct DTOModelData {
     public List<string> MemberNames { get; set; }
     public List<string> IgnoredRequired { get; set; }
     public SyntaxList<MemberDeclarationSyntax> Members { get; set; }
+    public List<MemberHasConversion> WithConversion { get; set; }
+    public List<MemberHasIndirectConversion> WithIndirectConversion { get; set; }
 
     public ConversionForm conversion;
 
@@ -33,6 +35,8 @@ internal record struct DTOModelData {
             conversion = HasDTOAttr.ConversionForm,
             MemberNames = modelMemberVisitor.MemberNames,
             Members = new(modelMemberVisitor.Members),
+            WithConversion = modelMemberVisitor.MembersWithConversion,
+            WithIndirectConversion = modelMemberVisitor.MembersWithIndirectConversion,
             IgnoredRequired = modelMemberVisitor.IgnoredRequiredMembersNames
         };
         return data;
