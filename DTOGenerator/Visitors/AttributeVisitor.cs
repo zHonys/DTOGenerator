@@ -2,7 +2,7 @@
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Operations;
-using SynoLib.Generators.Attributes;
+using SynoLib.Generators.DTOGenerator.Attributes;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -10,7 +10,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
 
-namespace SynoLib.Generators.Visitors;
+namespace SynoLib.Generators.DTOGenerator.Visitors;
 internal sealed class AttributeVisitor : CSharpSyntaxVisitor<List<AttributeData>> {
     private readonly ImmutableHashSet<string> _attributeNames;
     private readonly SemanticModel _semantics;
@@ -68,10 +68,6 @@ internal sealed class AttributeVisitor : CSharpSyntaxVisitor<List<AttributeData>
     public override List<AttributeData>? VisitFieldDeclaration(FieldDeclarationSyntax node) {
         return node.AttributeLists.SelectMany(al => al.Accept(this)).ToList();
     }
-    
-    private Type GetTypeFromString(string typeString)=>
-        Type.GetType(typeString);
-    
 }
 
 internal struct AttributeData {

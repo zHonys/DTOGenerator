@@ -1,7 +1,7 @@
-﻿using SynoLib.Generators.Visitors;
+﻿using SynoLib.Generators.DTOGenerator.Visitors;
 using System;
 
-namespace SynoLib.Generators.Attributes;
+namespace SynoLib.Generators.DTOGenerator.Attributes;
 
 /// <summary>
 /// Tells the generator that this class should have a DTO

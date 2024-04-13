@@ -1,7 +1,7 @@
 ﻿using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using SynoLib.Generators.Attributes;
+using SynoLib.Generators.DTOGenerator.Attributes;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -9,7 +9,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Xml.Linq;
 
-namespace SynoLib.Generators.Visitors;
+namespace SynoLib.Generators.DTOGenerator.Visitors;
 internal class ModelMemberVisitor : CSharpSyntaxVisitor{
     private readonly AttributeVisitor _attributeVisitor;
     public List<MemberDeclarationSyntax> Members { get; } = [];

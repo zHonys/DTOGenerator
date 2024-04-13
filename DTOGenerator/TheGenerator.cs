@@ -1,8 +1,8 @@
 ﻿using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using SynoLib.Generators.Attributes;
-using SynoLib.Generators.Visitors;
+using SynoLib.Generators.DTOGenerator.Attributes;
+using SynoLib.Generators.DTOGenerator.Visitors;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -15,7 +15,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 
-namespace SynoLib.Generators;
+namespace SynoLib.Generators.DTOGenerator;
 
 [Generator]
 internal sealed class TheGenerator : IIncrementalGenerator {
@@ -228,7 +228,7 @@ internal sealed class TheGenerator : IIncrementalGenerator {
         foreach (var item in data.WithConversion) {
             string methodName = isToModel ? "ToModel" : "ToDTO";
             TypeSyntax finalType = isToModel ? item.TargetType : SyntaxFactory.ParseTypeName(item.Attribute.ConvertedType);
-            var conversionExpression = GetConversionExpression(data.DTOName, finalType, item, methodName, paramName);
+            var conversionExpression = GetConversionExpression(finalType, item, methodName, paramName);
             var expression = SyntaxFactory.AssignmentExpression(
                 SyntaxKind.SimpleAssignmentExpression,
                 SyntaxFactory.IdentifierName(item.AttrData.TargetName),
@@ -252,7 +252,7 @@ internal sealed class TheGenerator : IIncrementalGenerator {
         return expressions;
     }
 
-    private static ExpressionSyntax GetConversionExpression(string dtoName, TypeSyntax finalType, MemberHasConversion conversionData, string methodName, string paramName) {
+    private static ExpressionSyntax GetConversionExpression(TypeSyntax finalType, MemberHasConversion conversionData, string methodName, string paramName) {
         return conversionData.Attribute.ConversionForm switch {
             HasConversionForm.Explicit      => ConversionWithExplicit(finalType, paramName, conversionData.AttrData.TargetName),
             HasConversionForm.Implicit      => ConversionWithImplicit(paramName, conversionData.AttrData.TargetName),
@@ -360,7 +360,6 @@ internal sealed class TheGenerator : IIncrementalGenerator {
     private static readonly SyntaxTriviaList _endLine = new(SyntaxFactory.EndOfLine("\n"));
 
     private static readonly SyntaxTokenList _publicStatic = new(NewToken(new(), SyntaxKind.PublicKeyword, _whiteSpace), NewToken(new(), SyntaxKind.StaticKeyword, _whiteSpace));
-    private static readonly SyntaxTokenList _internalStatic = new(NewToken(new(), SyntaxKind.InternalKeyword, _whiteSpace), NewToken(new(), SyntaxKind.StaticKeyword, _whiteSpace));
     private static readonly SyntaxTokenList _privateStatic = new(NewToken(new(), SyntaxKind.PrivateKeyword, _whiteSpace), NewToken(new(), SyntaxKind.StaticKeyword, _whiteSpace));
 
     private static readonly SyntaxToken _operator =  NewToken(new(), SyntaxKind.OperatorKeyword, _whiteSpace);
@@ -372,8 +371,6 @@ internal sealed class TheGenerator : IIncrementalGenerator {
 
     private static SyntaxToken NewToken(SyntaxKind kind) => SyntaxFactory.Token(kind);
     private static SyntaxToken NewToken(SyntaxTriviaList leading, SyntaxKind kind, SyntaxTriviaList trailing) => SyntaxFactory.Token(leading, kind, trailing);
-
-    private static SyntaxTrivia NewTrivia(SyntaxKind trivia, string text) => SyntaxFactory.SyntaxTrivia(trivia, text);
 
     #endregion
 }

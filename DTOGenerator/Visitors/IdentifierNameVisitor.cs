@@ -4,7 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 
-namespace SynoLib.Generators.Visitors;
+namespace SynoLib.Generators.DTOGenerator.Visitors;
 internal class IdentifierNameVisitor : CSharpSyntaxVisitor<string> {
     private IdentifierNameVisitor() { }
     public static IdentifierNameVisitor Instance = new();
